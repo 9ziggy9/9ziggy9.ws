@@ -3,9 +3,13 @@ package main
 import (
 	"context"
 	"net/http"
+	"sync"
 	"time"
+
 	"nhooyr.io/websocket"
 )
+
+var MSG_CHANNEL = make(chan wsMsg)
 
 type wsMsg struct {
 	msg_t websocket.MessageType;
@@ -19,52 +23,37 @@ type wsSession struct {
 
 type wsClient struct {
 	id uint64;
-	msgQueue []wsMsg;
 	session *wsSession;
 }
 func (me *wsClient) emitMsgs() {
-	for len(me.msgQueue) > 0 {
-		var msg wsMsg;
-		msg, me.msgQueue = me.msgQueue[0], me.msgQueue[1:]
-		me.session.conn.Write(*me.session.ctx, msg.msg_t, msg.raw)
+	for {
+		msg := <-MSG_CHANNEL
+		err := me.session.conn.Write(*me.session.ctx, msg.msg_t, msg.raw)
+		if err != nil { break }
+	}
+}
+func (me *wsClient) connect(session *wsSession, rm *wsRoom) {
+	for {
+		msg_t, msg, err := session.conn.Read(*session.ctx)
+		rm.broadcast(wsMsg{msg_t, msg})
+		if err != nil { break }
+		ServerLog(INFO, "msg(client: %d) : %s", me.id, msg[:len(msg) - 1])
 	}
 }
 
-type wsChannel struct { clientCount uint64; clients []*wsClient; }
-func (ch *wsChannel) addClient(session *wsSession) *wsClient {
-	newClient := &wsClient{
-		ch.clientCount,
-		make([]wsMsg, 0),
-		session,
-	}
-	ch.clients = append(ch.clients, newClient)
-	ch.clientCount++
+type wsRoom struct {clientCount uint64; clients []*wsClient;}
+
+func (rm *wsRoom) addClient(session *wsSession) *wsClient {
+	newClient := &wsClient{ rm.clientCount, session }
+	rm.clients = append(rm.clients, newClient)
+	rm.clientCount++
 	return newClient
 }
-func (ch *wsChannel) broadcast(me *wsClient, msg wsMsg) {
-	for _, client := range ch.clients {
-		if me.id == client.id { continue }
-		client.msgQueue = append(client.msgQueue, msg)
-	}
-}
+func (rm *wsRoom) broadcast(msg wsMsg) { MSG_CHANNEL <- msg }
 
-var WS_CHANNEL = &wsChannel {
+var WS_ROOM = &wsRoom {
 	clientCount: 0,
 	clients:     make([]*wsClient, 0),
-}
-
-func clientConnection(
-	ctx context.Context, conn *websocket.Conn, ch *wsChannel,
-) {
-	client := ch.addClient(&wsSession{conn, &ctx})
-	ServerLog(SUCCESS, "client %d connected", client.id)
-	for {
-		msg_t, msg, err := conn.Read(ctx)
-		ch.broadcast(client, wsMsg{msg_t, msg})
-		if err != nil { break }
-		ServerLog(INFO, "msg(client: %d) : %s", client.id, msg[:len(msg) - 1])
-		client.emitMsgs()
-	}
 }
 
 func routesWS() *http.ServeMux {
@@ -85,11 +74,14 @@ func routesWS() *http.ServeMux {
 		ctx, cancel := context.WithTimeout(r.Context(), time.Minute * 5)
 		defer cancel()
 
-		clientConnection(ctx, conn, WS_CHANNEL)
-	})
+		client := WS_ROOM.addClient(&wsSession{conn, &ctx})
+		ServerLog(SUCCESS, "client %d connected", client.id)
 
-	mux.HandleFunc("/ws/send", func(w http.ResponseWriter, r *http.Request) {
-		ServerLog(INFO, "received request on /ws/send: %v", r)
+		var wg sync.WaitGroup
+		wg.Add(2)
+			go func() { client.connect(&wsSession{conn, &ctx}, WS_ROOM) } ()
+			go func() { client.emitMsgs() } ()
+		wg.Wait()
 	})
 
 	return mux
