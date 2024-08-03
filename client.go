@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"sync"
 	"time"
-
 	"nhooyr.io/websocket"
 )
 
@@ -20,6 +19,7 @@ type wsSession struct {
 	ctx *context.Context;
 }
 
+// BEGIN: client methods
 type wsClient struct {
 	id      uint64;
 	session *wsSession;
@@ -40,7 +40,9 @@ func (me *wsClient) connect(session *wsSession, rm *wsRoom) {
 		ServerLog(INFO, "msg(client: %d) : %s", me.id, msg[:len(msg) - 1])
 	}
 }
+// END: client methods
 
+// BEGIN: room methods
 type wsRoom struct {clientCount uint64; clients []*wsClient;}
 func (rm *wsRoom) addClient(session *wsSession) *wsClient {
 	newClient := &wsClient{ rm.clientCount, session, make(chan wsMsg) }
@@ -53,6 +55,7 @@ func (rm *wsRoom) broadcast(msg wsMsg) {
 		if (!(msg.emitter_id == client.id)) { client.channel <- msg }
 	}
 }
+// END: room methods
 
 var WS_ROOM = &wsRoom {
 	clientCount: 0,
