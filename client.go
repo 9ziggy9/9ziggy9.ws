@@ -9,11 +9,10 @@ import (
 	"nhooyr.io/websocket"
 )
 
-var MSG_CHANNEL = make(chan wsMsg)
-
 type wsMsg struct {
-	msg_t websocket.MessageType;
-	raw  []byte;
+	msg_t      websocket.MessageType;
+	raw        []byte;
+	emitter_id uint64;
 }
 
 type wsSession struct {
@@ -22,12 +21,13 @@ type wsSession struct {
 }
 
 type wsClient struct {
-	id uint64;
+	id      uint64;
 	session *wsSession;
+	channel chan wsMsg;
 }
 func (me *wsClient) emitMsgs() {
 	for {
-		msg := <-MSG_CHANNEL
+		msg := <-me.channel
 		err := me.session.conn.Write(*me.session.ctx, msg.msg_t, msg.raw)
 		if err != nil { break }
 	}
@@ -35,21 +35,24 @@ func (me *wsClient) emitMsgs() {
 func (me *wsClient) connect(session *wsSession, rm *wsRoom) {
 	for {
 		msg_t, msg, err := session.conn.Read(*session.ctx)
-		rm.broadcast(wsMsg{msg_t, msg})
+		rm.broadcast(wsMsg{msg_t, msg, me.id})
 		if err != nil { break }
 		ServerLog(INFO, "msg(client: %d) : %s", me.id, msg[:len(msg) - 1])
 	}
 }
 
 type wsRoom struct {clientCount uint64; clients []*wsClient;}
-
 func (rm *wsRoom) addClient(session *wsSession) *wsClient {
-	newClient := &wsClient{ rm.clientCount, session }
+	newClient := &wsClient{ rm.clientCount, session, make(chan wsMsg) }
 	rm.clients = append(rm.clients, newClient)
 	rm.clientCount++
 	return newClient
 }
-func (rm *wsRoom) broadcast(msg wsMsg) { MSG_CHANNEL <- msg }
+func (rm *wsRoom) broadcast(msg wsMsg) {
+	for _, client := range rm.clients {
+		if (!(msg.emitter_id == client.id)) { client.channel <- msg }
+	}
+}
 
 var WS_ROOM = &wsRoom {
 	clientCount: 0,
