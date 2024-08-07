@@ -107,13 +107,22 @@ func (prov *wsRoomProvider) createRoom(rmId uint64) *wsRoom {
 }
 // END:   room provider
 
+func parseRoomIdFromPath(r *http.Request) uint64 {
+	rmId, err := strconv.ParseUint(r.PathValue("rmId"), 10, 64)
+	if err != nil {
+		ServerLog(ERROR, "invalid room ID: %v", err)
+		return 999
+	}
+	return rmId
+}
+
 func routesWS() *http.ServeMux {
 	mux := http.NewServeMux()
 	var WS_ROOMS = &wsRoomProvider { rooms: make(map[uint64] *wsRoom) }
 
 	mux.HandleFunc("GET /{rmId}", func(w http.ResponseWriter, r *http.Request) {
 		ServerLog(INFO, "client attempting to connect")
-		rmId, _ := strconv.ParseUint(r.PathValue("rmId"), 10, 64)
+		rmId := parseRoomIdFromPath(r)
 
 		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 			InsecureSkipVerify: true,
@@ -122,12 +131,9 @@ func routesWS() *http.ServeMux {
 		if err != nil {
 			ServerLog(ERROR, "failed to accept WS connection:\n  -> %v", err)
 		}
-		defer func () {
-			ServerLog(INFO, "Closing web socket")
-			conn.CloseNow()
-		}()
 
 		ctx, cancel := context.WithTimeout(r.Context(), time.Minute * 5)
+		defer cancel()
 
 		if !WS_ROOMS.roomExists(rmId)  { WS_ROOMS.createRoom(rmId) }
 
@@ -136,14 +142,19 @@ func routesWS() *http.ServeMux {
 		var wg sync.WaitGroup
 		wg.Add(2)
 			go func() {
-				defer wg.Done()
-				defer cancel()
+				defer func () {
+					WS_ROOMS.rooms[rmId].removeClient(client.id)
+					ServerLog(
+						INFO, "current room client count: %d",
+						WS_ROOMS.rooms[rmId].clientCount,
+					)
+					if WS_ROOMS.rooms[rmId].clientCount == 0 { conn.CloseNow() }
+					wg.Done()
+				}()
+
 				client.connect(&wsSession{conn, ctx}, WS_ROOMS.rooms[rmId])
 			}()
-			go func() {
-				defer wg.Done()
-				client.emitMsgs()
-			}()
+			go func() { client.emitMsgs() }()
 		wg.Wait()
 	})
 
