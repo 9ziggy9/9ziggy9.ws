@@ -5,8 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
-	"time"
-
+	// "time"
 	"nhooyr.io/websocket"
 )
 
@@ -33,26 +32,26 @@ func (me *wsClient) emitMsgs() {
 		case msg := <-me.channel:
 			err := me.session.conn.Write(me.session.ctx, msg.msg_t, msg.raw)
 			if err != nil {
-				ServerLog(ERROR, "failed to send message to client %d: %v", me.id, err)
+				ServerLog(
+					ERROR, "failed to send message to client %d:\n  -> %v",
+					me.id, err,
+				)
 				return
 			}
-		case <- me.session.ctx.Done():
-			ServerLog(INFO, "client %d disconnected", me.id)
-			return
+		case <-me.session.ctx.Done(): return
 		}
 	}
 }
-func (me *wsClient) connect(session *wsSession, rm *wsRoom) {
+func (me *wsClient) connect(session *wsSession, rm *wsRoom) error {
 	for {
 		select {
 		case <-session.ctx.Done():
-			ServerLog(INFO, "Client %d diconnected.", me.id)
-			return
+			return nil
 		default:	
 			msg_t, msg, err := session.conn.Read(session.ctx)
+			if err != nil { return err }
 			rm.broadcast(wsMsg{msg_t, msg, me.id})
-			if err != nil { return }
-			ServerLog(INFO, "msg(client: %d) : %s", me.id, msg[:len(msg) - 1])
+			ServerLog(INFO, "msg :: (client: %d) : %s", me.id, msg[:len(msg) - 1])
 		}
 	}
 }
@@ -131,8 +130,9 @@ func routesWS() *http.ServeMux {
 		if err != nil {
 			ServerLog(ERROR, "failed to accept WS connection:\n  -> %v", err)
 		}
+		defer conn.CloseNow()
 
-		ctx, cancel := context.WithTimeout(r.Context(), time.Minute * 5)
+		ctx, cancel := context.WithCancel(r.Context())
 		defer cancel()
 
 		if !WS_ROOMS.roomExists(rmId)  { WS_ROOMS.createRoom(rmId) }
@@ -142,25 +142,20 @@ func routesWS() *http.ServeMux {
 		var wg sync.WaitGroup
 		wg.Add(2)
 			go func() {
-				defer func () {
-					WS_ROOMS.rooms[rmId].removeClient(client.id)
-					ServerLog(
-						INFO, "current room client count: %d",
-						WS_ROOMS.rooms[rmId].clientCount,
-					)
-					if WS_ROOMS.rooms[rmId].clientCount == 0 {
-						if err := conn.CloseNow(); err != nil {
-							ServerLog(
-								ERROR, "socket failed to close correctly:\n  -> %v", err,
-							)
-						}
-					}
-					wg.Done()
-				}()
+				defer wg.Done()
+				defer WS_ROOMS.rooms[rmId].removeClient(client.id)
+				defer ServerLog(INFO, "disconnecting client %d", client.id)
 				client.connect(&wsSession{conn, ctx}, WS_ROOMS.rooms[rmId])
 			}()
-			go func() { client.emitMsgs() }() // <-- ISSUE IS HERE
+
+			go func() { defer wg.Done(); client.emitMsgs() }()
 		wg.Wait()
+
+		ServerLog(
+			INFO, "current room client count: %d",
+			WS_ROOMS.rooms[rmId].clientCount,
+		)
+		conn.Close(websocket.StatusNormalClosure, "")
 	})
 
 	return mux

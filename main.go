@@ -27,7 +27,7 @@ func routesMain() *http.ServeMux {
 }
 
 func init() {
-	log.SetFlags(log.Ldate | log.Ltime | log.LUTC | log.Llongfile)
+	log.SetFlags(log.Ldate | log.Ltime | log.LUTC)
 	if err := LoadEnv(ENV_FILE); err != nil {
 		ServerLog(ERROR, "failed to load environment variables:\n  -> %v", err)
 	}
