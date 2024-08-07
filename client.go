@@ -148,13 +148,18 @@ func routesWS() *http.ServeMux {
 						INFO, "current room client count: %d",
 						WS_ROOMS.rooms[rmId].clientCount,
 					)
-					if WS_ROOMS.rooms[rmId].clientCount == 0 { conn.CloseNow() }
+					if WS_ROOMS.rooms[rmId].clientCount == 0 {
+						if err := conn.CloseNow(); err != nil {
+							ServerLog(
+								ERROR, "socket failed to close correctly:\n  -> %v", err,
+							)
+						}
+					}
 					wg.Done()
 				}()
-
 				client.connect(&wsSession{conn, ctx}, WS_ROOMS.rooms[rmId])
 			}()
-			go func() { client.emitMsgs() }()
+			go func() { client.emitMsgs() }() // <-- ISSUE IS HERE
 		wg.Wait()
 	})
 
