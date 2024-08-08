@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
-	// "time"
 	"nhooyr.io/websocket"
 )
 
@@ -30,6 +29,7 @@ type wsClient struct {
 func (me *wsClient) emitMsgs() {
 	for {
 		select {
+		case <-me.session.ctx.Done(): return
 		case msg := <-me.channel:
 			err := me.session.conn.Write(me.session.ctx, msg.msg_t, msg.raw)
 			if err != nil {
@@ -39,7 +39,6 @@ func (me *wsClient) emitMsgs() {
 				)
 				return
 			}
-		case <-me.session.ctx.Done(): return
 		}
 	}
 }
@@ -49,16 +48,17 @@ func (me *wsClient) connect(
 ) websocket.StatusCode {
 	for {
 		select {
-		case <-session.ctx.Done():
-			return websocket.StatusNormalClosure
+		case <-session.ctx.Done(): return websocket.StatusNormalClosure
 		default:	
 			msg_t, msg, err := session.conn.Read(session.ctx)
 			if err != nil {
 				me.session.cancelCtx()
 				return websocket.CloseStatus(err)
 			}
-			rm.broadcast(wsMsg{msg_t, msg, me.id})
-			ServerLog(INFO, "msg :: (client: %d) : %s", me.id, msg[:len(msg) - 1])
+			if len(msg) > 0 {
+				rm.broadcast(wsMsg{msg_t, msg, me.id})
+				ServerLog(INFO, "msg :: (client: %d) : %s", me.id, msg[:len(msg) - 1])
+			}
 		}
 	}
 }
@@ -74,7 +74,7 @@ func (rm *wsRoom) addClient(session *wsSession) *wsClient {
 	rm.mtx.Lock()
 	defer rm.mtx.Unlock()
 
-	newClient := &wsClient{ rm.clientCount, session, make(chan wsMsg) }
+	newClient := &wsClient{ rm.assignClientId(), session, make(chan wsMsg) }
 	rm.clients[newClient.id] = newClient
 
 	ServerLog(SUCCESS, "client %d connected", newClient.id)
@@ -94,18 +94,23 @@ func (rm *wsRoom) broadcast(msg wsMsg) {
 		if (!(msg.emitter_id == client.id)) { client.channel <- msg }
 	}
 }
+func (rm *wsRoom) assignClientId() uint64 {
+	var clientId uint64 = 0
+	for id := range rm.clients {
+		if id == clientId { clientId++ }
+	}
+	return clientId
+}
 // END: room methods
 
 // BEGIN: room provider
 type wsRoomProvider struct {
 	rooms map[uint64] *wsRoom;
 }
-
 func (prov *wsRoomProvider) roomExists(rmId uint64) bool {
 	_, ok := prov.rooms[rmId]
 	return ok
 }
-
 func (prov *wsRoomProvider) createRoom(rmId uint64) *wsRoom {
 	prov.rooms[rmId] = &wsRoom{
 		clientCount: 0,
@@ -113,7 +118,7 @@ func (prov *wsRoomProvider) createRoom(rmId uint64) *wsRoom {
 	}
 	return prov.rooms[rmId]
 }
-// END:   room provider
+// END: room provider
 
 func parseRoomIdFromPath(r *http.Request) uint64 {
 	rmId, err := strconv.ParseUint(r.PathValue("rmId"), 10, 64)
@@ -124,9 +129,8 @@ func parseRoomIdFromPath(r *http.Request) uint64 {
 	return rmId
 }
 
-func routesWS() *http.ServeMux {
+func routesWS(ws_rooms *wsRoomProvider) *http.ServeMux {
 	mux := http.NewServeMux()
-	var WS_ROOMS = &wsRoomProvider { rooms: make(map[uint64] *wsRoom) }
 
 	mux.HandleFunc("GET /{rmId}", func(w http.ResponseWriter, r *http.Request) {
 		ServerLog(INFO, "client attempting to connect")
@@ -137,16 +141,14 @@ func routesWS() *http.ServeMux {
 		})
 
 		if err != nil {
-			ServerLog(ERROR, "failed to accept WS connection:\n  -> %v", err)
+			ServerLog(INFO, "failed to accept WS connection:\n  -> %v", err)
 		}
-		defer conn.CloseNow() // no-op but just in case
 
 		ctx, cancelCtx := context.WithCancel(r.Context())
-		defer cancelCtx() // no-op but just in case
 
-		if !WS_ROOMS.roomExists(rmId)  { WS_ROOMS.createRoom(rmId) }
+		if !ws_rooms.roomExists(rmId)  { ws_rooms.createRoom(rmId) }
 
-		client := WS_ROOMS.rooms[rmId].addClient(&wsSession{
+		client := ws_rooms.rooms[rmId].addClient(&wsSession{
 			conn, ctx, cancelCtx,
 		})
 
@@ -154,10 +156,10 @@ func routesWS() *http.ServeMux {
 		wg.Add(2)
 			go func() {
 				defer wg.Done()
-				defer WS_ROOMS.rooms[rmId].removeClient(client.id)
+				defer ws_rooms.rooms[rmId].removeClient(client.id)
 				close_status := client.connect(
 					&wsSession{conn, ctx, cancelCtx},
-					WS_ROOMS.rooms[rmId],
+					ws_rooms.rooms[rmId],
 				);
 				ServerLog(INFO, "client disconnection code: %d", close_status)
 			}()
@@ -169,8 +171,8 @@ func routesWS() *http.ServeMux {
 		wg.Wait()
 
 		ServerLog(
-			INFO, "current room client count: %d",
-			WS_ROOMS.rooms[rmId].clientCount,
+			INFO, "current [room: %d] client count: %d",
+			rmId, ws_rooms.rooms[rmId].clientCount,
 		)
 		conn.Close(websocket.StatusNormalClosure, "")
 	})

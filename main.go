@@ -18,11 +18,11 @@ func tcpConnect() net.Listener {
 	return tcp_in
 }
 
-func routesMain() *http.ServeMux {
+func routesMain(ws_rooms *wsRoomProvider) *http.ServeMux {
 	mux   := http.NewServeMux()
 	// files := http.FileServer(http.Dir("static"))
 	// mux.Handle("/", http.StripPrefix("/", files))
-	mux.Handle("/", routesWS())
+	mux.Handle("/", routesWS(ws_rooms))
 	return mux
 }
 
@@ -36,9 +36,13 @@ func init() {
 func main() {
 	tcp_in := tcpConnect()
 	defer tcp_in.Close()
+	ws_keepalive_ticker := time.NewTicker(1 * time.Second)
+	defer ws_keepalive_ticker.Stop()
+
+	ws_rooms := &wsRoomProvider { rooms: make(map[uint64] *wsRoom) }
 
 	server := &http.Server{
-		Handler:      routesMain(),
+		Handler:      routesMain(ws_rooms),
 		ReadTimeout:  time.Second * 10,
 		WriteTimeout: time.Second * 10,
 	}
@@ -51,8 +55,22 @@ func main() {
 		err_ch <- server.Serve(tcp_in)
 	}()
 
+	go func() {
+		for {
+			select {
+			case <- ws_keepalive_ticker.C:
+				for rmId, room := range ws_rooms.rooms {
+					for _, client := range room.clients {
+						client.session.conn.Ping(client.session.ctx)
+						ServerLog(INFO, "PINGING client %d in room %d", client.id, rmId)
+					}
+				}
+			}
+		}
+	}()
+
 	select {
-	case err := <-err_ch: ServerLog(ERROR, "failed to serve:\n  -> %v", err)
-	case <-sig_ch: ServerLog(SUCCESS, "received interrupt signal, goodbye")
+	case err := <- err_ch: ServerLog(ERROR, "failed to serve:\n  -> %v", err)
+	case <- sig_ch: ServerLog(SUCCESS, "received interrupt signal, goodbye")
 	}
 }
