@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"time"
 	"nhooyr.io/websocket"
 )
 
@@ -178,4 +179,20 @@ func routesWS(ws_rooms *wsRoomProvider) *http.ServeMux {
 	})
 
 	return mux
+}
+
+func keepAlive(ws_rooms *wsRoomProvider) {
+	ws_keepalive_ticker := time.NewTicker(1 * time.Second)
+	defer ws_keepalive_ticker.Stop()
+	for {
+		select {
+		case <- ws_keepalive_ticker.C:
+			for rmId, room := range ws_rooms.rooms {
+				for _, client := range room.clients {
+					client.session.conn.Ping(client.session.ctx)
+					ServerLog(INFO, "PINGING client %d in room %d", client.id, rmId)
+				}
+			}
+		}
+	}
 }

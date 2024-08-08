@@ -36,8 +36,6 @@ func init() {
 func main() {
 	tcp_in := tcpConnect()
 	defer tcp_in.Close()
-	ws_keepalive_ticker := time.NewTicker(1 * time.Second)
-	defer ws_keepalive_ticker.Stop()
 
 	ws_rooms := &wsRoomProvider { rooms: make(map[uint64] *wsRoom) }
 
@@ -51,23 +49,8 @@ func main() {
 	sig_ch := make(chan os.Signal, 1)
 	signal.Notify(sig_ch, os.Interrupt)
 
-	go func() {
-		err_ch <- server.Serve(tcp_in)
-	}()
-
-	go func() {
-		for {
-			select {
-			case <- ws_keepalive_ticker.C:
-				for rmId, room := range ws_rooms.rooms {
-					for _, client := range room.clients {
-						client.session.conn.Ping(client.session.ctx)
-						ServerLog(INFO, "PINGING client %d in room %d", client.id, rmId)
-					}
-				}
-			}
-		}
-	}()
+	go func() { err_ch <- server.Serve(tcp_in) }()
+	go keepAlive(ws_rooms)
 
 	select {
 	case err := <- err_ch: ServerLog(ERROR, "failed to serve:\n  -> %v", err)
