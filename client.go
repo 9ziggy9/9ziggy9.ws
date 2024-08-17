@@ -4,8 +4,11 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/dgrijalva/jwt-go"
 	"nhooyr.io/websocket"
 )
 
@@ -130,12 +133,56 @@ func parseRoomIdFromPath(r *http.Request) uint64 {
 	return rmId
 }
 
+var jwtKey = []byte("SUPER_SECRET");
+
+type JwtClaims struct {
+	Name string `json:"name"`;
+	ID   uint64 `json:"id"`;
+	jwt.StandardClaims;
+}
+
+type contextKey string
+const (
+	NameKey contextKey = "name"
+	IdKey   contextKey = "name"
+	RoleKey contextKey = "role"
+)
+
+func validateJWT(tokenString string) (*JwtClaims, error) {
+    claims := &JwtClaims{}
+	token, err := jwt.ParseWithClaims(
+		tokenString, claims,
+		func(token *jwt.Token) (interface{}, error) {
+        return jwtKey, nil
+    })
+    if err != nil || !token.Valid {
+        return nil, err
+    }
+    return claims, nil
+}
+
 func routesWS(ws_rooms *wsRoomProvider) *http.ServeMux {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /{rmId}", func(w http.ResponseWriter, r *http.Request) {
 		ServerLog(INFO, "client attempting to connect")
 		rmId := parseRoomIdFromPath(r)
+
+		tokenString := r.Header.Get("Authorization")
+		if tokenString == "" {
+				http.Error(w, "missing token", http.StatusUnauthorized)
+				return
+		}
+
+		tokenString = strings.TrimPrefix(tokenString, "Bearer ")
+
+		claims, err := validateJWT(tokenString)
+		_ = claims;
+
+		if err != nil {
+				http.Error(w, "invalid token", http.StatusUnauthorized)
+				return
+		}
 
 		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 			InsecureSkipVerify: true,

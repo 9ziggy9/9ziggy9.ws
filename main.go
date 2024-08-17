@@ -20,8 +20,6 @@ func tcpConnect() net.Listener {
 
 func routesMain(ws_rooms *wsRoomProvider) *http.ServeMux {
 	mux   := http.NewServeMux()
-	// files := http.FileServer(http.Dir("static"))
-	// mux.Handle("/", http.StripPrefix("/", files))
 	mux.Handle("/", routesWS(ws_rooms))
 	return mux
 }
