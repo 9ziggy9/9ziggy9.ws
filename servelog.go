@@ -76,7 +76,7 @@ func ServerLog(lvl LogLevel, msg string, optargs ...interface{}) {
 		);
 	case ERROR:
 		fn, _, line := extractRuntimeMetaData()
-		log.Fatalf(
+		log.Printf(
 			log_fmt_err,
 			ColorizeText(LogLevelStrMap[lvl], TEXT_COLORS.Red),
 			ColorizeText(fmt.Sprintf(msg, optargs...), TEXT_COLORS.Cyan),

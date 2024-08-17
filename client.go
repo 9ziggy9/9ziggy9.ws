@@ -170,8 +170,9 @@ func routesWS(ws_rooms *wsRoomProvider) *http.ServeMux {
 
 		tokenString := r.Header.Get("Authorization")
 		if tokenString == "" {
-				http.Error(w, "missing token", http.StatusUnauthorized)
-				return
+			ServerLog(ERROR, "attempted unauthorized access!");
+			http.Error(w, "missing token", http.StatusUnauthorized)
+			return
 		}
 
 		tokenString = strings.TrimPrefix(tokenString, "Bearer ")
@@ -180,8 +181,9 @@ func routesWS(ws_rooms *wsRoomProvider) *http.ServeMux {
 		_ = claims;
 
 		if err != nil {
-				http.Error(w, "invalid token", http.StatusUnauthorized)
-				return
+			ServerLog(ERROR, "attempted unauthorized access!");
+			http.Error(w, "invalid token", http.StatusUnauthorized)
+			return
 		}
 
 		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
