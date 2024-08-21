@@ -4,11 +4,9 @@ import (
 	"context"
 	"net/http"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
-
-	"github.com/dgrijalva/jwt-go"
+	srv "github.com/9ziggy9/9ziggy9.ws/server"
 	"nhooyr.io/websocket"
 )
 
@@ -37,8 +35,8 @@ func (me *wsClient) emitMsgs() {
 		case msg := <-me.channel:
 			err := me.session.conn.Write(me.session.ctx, msg.msg_t, msg.raw)
 			if err != nil {
-				ServerLog(
-					INFO, "failed to send message to client %d:\n  -> %v",
+				srv.Log(
+					srv.INFO, "failed to send message to client %d:\n  -> %v",
 					me.id, err,
 				)
 				return
@@ -61,7 +59,7 @@ func (me *wsClient) connect(
 			}
 			if len(msg) > 0 {
 				rm.broadcast(wsMsg{msg_t, msg, me.id})
-				ServerLog(INFO, "msg :: (client: %d) : %s", me.id, msg[:len(msg) - 1])
+				srv.Log(srv.INFO, "msg :: (client: %d) : %s", me.id, msg[:len(msg) - 1])
 			}
 		}
 	}
@@ -81,13 +79,13 @@ func (rm *wsRoom) addClient(session *wsSession) *wsClient {
 	newClient := &wsClient{ rm.assignClientId(), session, make(chan wsMsg) }
 	rm.clients[newClient.id] = newClient
 
-	ServerLog(SUCCESS, "client %d connected", newClient.id)
+	srv.Log(srv.SUCCESS, "client %d connected", newClient.id)
 
 	rm.clientCount++
 	return newClient
 }
 func (rm *wsRoom) removeClient(clientId uint64) {
-	defer ServerLog(INFO, "disconnecting client %d", clientId)
+	defer srv.Log(srv.INFO, "disconnecting client %d", clientId)
 	rm.mtx.Lock()
 	defer rm.mtx.Unlock()
 	delete(rm.clients, clientId)
@@ -127,71 +125,25 @@ func (prov *wsRoomProvider) createRoom(rmId uint64) *wsRoom {
 func parseRoomIdFromPath(r *http.Request) uint64 {
 	rmId, err := strconv.ParseUint(r.PathValue("rmId"), 10, 64)
 	if err != nil {
-		ServerLog(ERROR, "invalid room ID: %v", err)
+		srv.Log(srv.ERROR, "invalid room ID: %v", err)
 		return 999
 	}
 	return rmId
-}
-
-var jwtKey = []byte("SUPER_SECRET");
-
-type JwtClaims struct {
-	Name string `json:"name"`;
-	ID   uint64 `json:"id"`;
-	jwt.StandardClaims;
-}
-
-type contextKey string
-const (
-	NameKey contextKey = "name"
-	IdKey   contextKey = "name"
-	RoleKey contextKey = "role"
-)
-
-func validateJWT(tokenString string) (*JwtClaims, error) {
-    claims := &JwtClaims{}
-	token, err := jwt.ParseWithClaims(
-		tokenString, claims,
-		func(token *jwt.Token) (interface{}, error) {
-        return jwtKey, nil
-    })
-    if err != nil || !token.Valid {
-        return nil, err
-    }
-    return claims, nil
 }
 
 func routesWS(ws_rooms *wsRoomProvider) *http.ServeMux {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /{rmId}", func(w http.ResponseWriter, r *http.Request) {
-		ServerLog(INFO, "client attempting to connect")
+		srv.Log(srv.INFO, "client attempting to connect")
 		rmId := parseRoomIdFromPath(r)
-
-		tokenString := r.Header.Get("Authorization")
-		if tokenString == "" {
-			ServerLog(ERROR, "attempted unauthorized access!");
-			http.Error(w, "missing token", http.StatusUnauthorized)
-			return
-		}
-
-		tokenString = strings.TrimPrefix(tokenString, "Bearer ")
-
-		claims, err := validateJWT(tokenString)
-		_ = claims;
-
-		if err != nil {
-			ServerLog(ERROR, "attempted unauthorized access!");
-			http.Error(w, "invalid token", http.StatusUnauthorized)
-			return
-		}
 
 		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 			InsecureSkipVerify: true,
 		})
 
 		if err != nil {
-			ServerLog(INFO, "failed to accept WS connection:\n  -> %v", err)
+			srv.Log(srv.INFO, "failed to accept WS connection:\n  -> %v", err)
 		}
 
 		ctx, cancelCtx := context.WithCancel(r.Context())
@@ -211,7 +163,7 @@ func routesWS(ws_rooms *wsRoomProvider) *http.ServeMux {
 					&wsSession{conn, ctx, cancelCtx},
 					ws_rooms.rooms[rmId],
 				);
-				ServerLog(INFO, "client disconnection code: %d", close_status)
+				srv.Log(srv.INFO, "client disconnection code: %d", close_status)
 			}()
 
 			go func() {
@@ -220,8 +172,8 @@ func routesWS(ws_rooms *wsRoomProvider) *http.ServeMux {
 			}()
 		wg.Wait()
 
-		ServerLog(
-			INFO, "current [room: %d] client count: %d",
+		srv.Log(
+			srv.INFO, "current [room: %d] client count: %d",
 			rmId, ws_rooms.rooms[rmId].clientCount,
 		)
 		conn.Close(websocket.StatusNormalClosure, "")
@@ -239,7 +191,7 @@ func keepAlive(ws_rooms *wsRoomProvider) {
 			for rmId, room := range ws_rooms.rooms {
 				for _, client := range room.clients {
 					client.session.conn.Ping(client.session.ctx)
-					ServerLog(INFO, "PINGING client %d in room %d", client.id, rmId)
+					srv.Log(srv.INFO, "PINGING client %d in room %d", client.id, rmId)
 				}
 			}
 		}

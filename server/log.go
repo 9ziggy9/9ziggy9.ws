@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"runtime"
@@ -60,7 +60,8 @@ func ColorizeText(txt string, clr string) string {
 const log_fmt_info string = "\n  -> [%s] %s\n";
 const log_fmt_err  string = "\n  -> [%s] %s (@ %s :: %d)\n\n";
 
-func ServerLog(lvl LogLevel, msg string, optargs ...interface{}) {
+func Log(lvl LogLevel, msg string, optargs ...interface{}) {
+	fmt.Printf("\n")
 	switch (lvl) {
 	case INFO:
 		log.Printf(

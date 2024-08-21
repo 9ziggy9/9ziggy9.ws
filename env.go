@@ -4,11 +4,12 @@ import (
 	"os"
 	"bufio"
 	"strings"
+	srv "github.com/9ziggy9/9ziggy9.ws/server"
 )
 
 func LoadEnv(filename string) error {
-	ServerLog(INFO, "loading environment variables from %s ...", filename)
-	defer ServerLog(SUCCESS, "environmental variables loaded.")
+	srv.Log(srv.INFO, "loading environment variables from %s ...", filename)
+	defer srv.Log(srv.SUCCESS, "environmental variables loaded.")
 
 	file, err := os.Open(filename); if err != nil { return err }
 	defer file.Close()
