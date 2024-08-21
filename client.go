@@ -59,7 +59,7 @@ func (me *wsClient) connect(
 			}
 			if len(msg) > 0 {
 				rm.broadcast(wsMsg{msg_t, msg, me.id})
-				srv.Log(srv.INFO, "msg :: (client: %d) : %s", me.id, msg[:len(msg) - 1])
+				srv.Log(srv.INFO, "msg :: (client: %d) : %s", me.id, msg[:len(msg)])
 			}
 		}
 	}
